@@ -3,6 +3,7 @@ import os
 import sys
 import logging
 from datetime import datetime
+from itertools import groupby
 
 from flask import request, Flask
 from influxdb import InfluxDBClient
@@ -30,11 +31,80 @@ client.create_database("db")
 client.switch_database("db")
 
 
+def field_or_tag(datapoint: dict, field: str) -> str:
+    if type(datapoint[field]) in [int, float]:
+        return "field"
+    else:
+        return "tag"
+
+
+def write_to_influx(data: list):
+    logger.info(f"DB Write Started")
+
+    for i in range(0, len(data), DATAPOINTS_CHUNK):
+        logger.info(f"DB Writing chunk")
+        client.write_points(data[i : i + DATAPOINTS_CHUNK])
+
+    logger.info(f"DB Metrics Write Complete")
+
+
+def ingest_workouts(workouts: list):
+    logger.info(f"Ingesting Workouts Routes")
+    transformed_workout_data = []
+
+    for workout in workouts:
+        tags = {"id": workout["name"] + "-" + workout["start"] + "-" + workout["end"]}
+        for gps_point in workout["route"]:
+            point = {
+                "measurement": "workouts",
+                "time": gps_point["timestamp"],
+                "tags": tags,
+                "fields": {
+                    "lat": gps_point["lat"],
+                    "lng": gps_point["lon"],
+                    "geohash": geohash.encode(gps_point["lat"], gps_point["lon"], 7),
+                },
+            }
+            transformed_workout_data.append(point)
+
+        write_to_influx(transformed_workout_data)
+
+    logger.info(f"Ingesting Workouts Complete")
+
+
+def ingest_metrics(metrics: list):
+    logger.info(f"Ingesting Metrics")
+    transformed_data = []
+
+    for metric in metrics:
+        for datapoint in metric["data"]:
+            metric_fields = set(datapoint.keys())
+            metric_fields.remove("date")
+
+            metric_fields = dict(groupby(metric_fields, field_or_tag))
+            number_fields = metric_fields["field"]
+            string_fields = metric_fields["tag"]
+
+            point = {
+                "measurement": metric["name"],
+                "time": datapoint["date"],
+                "tags": {str(field): str(datapoint[field]) for field in string_fields},
+                "fields": {
+                    str(field): float(datapoint[field]) for field in number_fields
+                },
+            }
+
+            transformed_data.append(point)
+
+    logger.info(f"Data Transformation Complete")
+    logger.info(f"Number of data points to write: {len(transformed_data)}")
+
+    write_to_influx(transformed_data)
+
+
 @app.route("/collect", methods=["POST", "GET"])
 def collect():
     logger.info(f"Request received")
-
-    transformed_data = []
 
     try:
         if data_store is not None:
@@ -48,74 +118,8 @@ def collect():
         return "Invalid JSON Received", 400
 
     try:
-        logger.info(f"Ingesting Metrics")
-        for metric in healthkit_data.get("data", {}).get("metrics", []):
-            for datapoint in metric["data"]:
-                number_fields = []
-                string_fields = []
-                metric_fields = set(datapoint.keys())
-                metric_fields.remove("date")
-
-                for metric_field in metric_fields:
-                    if (
-                        type(datapoint[metric_field]) == int
-                        or type(datapoint[metric_field]) == float
-                    ):
-                        number_fields.append(metric_field)
-                    else:
-                        string_fields.append(metric_field)
-
-                point = {
-                    "measurement": metric["name"],
-                    "time": datapoint["date"],
-                    "tags": {
-                        str(nfield): str(datapoint[nfield]) for nfield in string_fields
-                    },
-                    "fields": {
-                        str(nfield): float(datapoint[nfield])
-                        for nfield in number_fields
-                    },
-                }
-
-                transformed_data.append(point)
-
-        logger.info(f"Data Transformation Complete")
-        logger.info(f"Number of data points to write: {len(transformed_data)}")
-        logger.info(f"DB Write Started")
-
-        for i in range(0, len(transformed_data), DATAPOINTS_CHUNK):
-            logger.info(f"DB Writing chunk")
-            client.write_points(transformed_data[i : i + DATAPOINTS_CHUNK])
-
-        logger.info(f"DB Metrics Write Complete")
-        logger.info(f"Ingesting Workouts Routes")
-
-        transformed_workout_data = []
-
-        for workout in healthkit_data.get("data", {}).get("workouts", []):
-            tags = {
-                "id": workout["name"] + "-" + workout["start"] + "-" + workout["end"]
-            }
-            for gps_point in workout["route"]:
-                point = {
-                    "measurement": "workouts",
-                    "time": gps_point["timestamp"],
-                    "tags": tags,
-                    "fields": {
-                        "lat": gps_point["lat"],
-                        "lng": gps_point["lon"],
-                        "geohash": geohash.encode(
-                            gps_point["lat"], gps_point["lon"], 7
-                        ),
-                    },
-                }
-                transformed_workout_data.append(point)
-
-            for i in range(0, len(transformed_workout_data), DATAPOINTS_CHUNK):
-                logger.info(f"DB Writing chunk")
-                client.write_points(transformed_workout_data[i : i + DATAPOINTS_CHUNK])
-
-        logger.info(f"Ingesting Workouts Complete")
+        ingest_metrics(healthkit_data.get("data", {}).get("metrics", []))
+        ingest_workouts(healthkit_data.get("data", {}).get("workouts", []))
     except:
         logger.exception("Caught Exception. See stacktrace for details.")
         return "Server Error", 500
