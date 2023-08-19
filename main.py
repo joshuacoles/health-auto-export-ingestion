@@ -25,10 +25,11 @@ app.debug = True
 data_store = os.environ.get("DATA_STORE", None)
 influx_host = os.environ.get("INFLUX_HOST", "influx")
 influx_port = os.environ.get("INFLUX_PORT", 8086)
+influx_db = os.environ.get("INFLUXDB_DB", 'health')
 
 client = InfluxDBClient(host=influx_host, port=influx_port)
-client.create_database("db")
-client.switch_database("db")
+client.create_database(influx_db)
+client.switch_database(influx_db)
 
 
 def field_or_tag(datapoint: dict, field: str) -> str:
