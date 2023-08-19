@@ -102,7 +102,7 @@ def ingest_metrics(metrics: list):
     write_to_influx(transformed_data)
 
 
-@app.route("/collect", methods=["POST", "GET"])
+@app.route("/", methods=["POST", "GET"])
 def collect():
     logger.info(f"Request received")
 
