@@ -1,9 +1,9 @@
 import json
 import os
 import sys
-import socket
 import logging
 from datetime import datetime
+
 from flask import request, Flask
 from influxdb import InfluxDBClient
 from geolib import geohash
@@ -21,8 +21,9 @@ logger.addHandler(handler)
 app = Flask(__name__)
 app.debug = True
 
-influx_host = os.environ.get('INFLUX_HOST', 'influx')
-influx_port = os.environ.get('INFLUX_PORT', 8086)
+data_store = os.environ.get("DATA_STORE", None)
+influx_host = os.environ.get("INFLUX_HOST", "influx")
+influx_port = os.environ.get("INFLUX_PORT", 8086)
 
 client = InfluxDBClient(host=influx_host, port=influx_port)
 client.create_database("db")
@@ -33,10 +34,15 @@ client.switch_database("db")
 def collect():
     logger.info(f"Request received")
 
-    healthkit_data = None
     transformed_data = []
 
     try:
+        if data_store is not None:
+            with open(
+                os.path.join(data_store, datetime.now().isoformat() + ".json"), "w"
+            ) as f:
+                f.write(json.dumps(request.data))
+
         healthkit_data = json.loads(request.data)
     except:
         return "Invalid JSON Received", 400
@@ -118,7 +124,4 @@ def collect():
 
 
 if __name__ == "__main__":
-    hostname = socket.gethostname()
-    ip_address = socket.gethostbyname(hostname)
-    logger.info(f"Local Network Endpoint: http://{ip_address}/collect")
-    app.run(host="0.0.0.0", port=5353)
+    app.run(host="0.0.0.0", port=3000)
