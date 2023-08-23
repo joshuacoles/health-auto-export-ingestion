@@ -125,6 +125,11 @@ def collect(healthkit_data: dict):
     return "Ok"
 
 
+@app.get("/health")
+def health():
+    return "Ok"
+
+
 if __name__ == "__main__":
     import uvicorn
 
