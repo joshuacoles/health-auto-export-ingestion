@@ -3,9 +3,8 @@ import os
 import sys
 import logging
 from datetime import datetime
-from itertools import groupby
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from influxdb import InfluxDBClient
 from geolib import geohash
 
@@ -31,11 +30,21 @@ client.create_database(influx_db)
 client.switch_database(influx_db)
 
 
-def field_or_tag(datapoint: dict, field: str) -> str:
-    if type(datapoint[field]) in [int, float]:
-        return "field"
-    else:
-        return "tag"
+def split_fields(datapoint: dict):
+    data = {}
+    tags = {}
+
+    for field_key in datapoint:
+        if field_key in ["date"]:
+            continue
+
+        v = datapoint[field_key]
+        if type(v) in [int, float]:
+            data[field_key] = float(v)
+        else:
+            tags[field_key] = str(v)
+
+    return data, tags
 
 
 def write_to_influx(data: list):
@@ -78,20 +87,13 @@ def ingest_metrics(metrics: list):
 
     for metric in metrics:
         for datapoint in metric["data"]:
-            metric_fields = set(datapoint.keys())
-            metric_fields.remove("date")
-
-            metric_fields = dict(groupby(metric_fields, field_or_tag))
-            number_fields = metric_fields["field"]
-            string_fields = metric_fields["tag"]
+            data, tags = split_fields(datapoint)
 
             point = {
                 "measurement": metric["name"],
                 "time": datapoint["date"],
-                "tags": {str(field): str(datapoint[field]) for field in string_fields},
-                "fields": {
-                    str(field): float(datapoint[field]) for field in number_fields
-                },
+                "tags": tags,
+                "fields": data,
             }
 
             transformed_data.append(point)
@@ -115,11 +117,12 @@ def collect(healthkit_data: dict):
     try:
         ingest_metrics(healthkit_data.get("data", {}).get("metrics", []))
         ingest_workouts(healthkit_data.get("data", {}).get("workouts", []))
-    except:
+    except Exception as e:
         logger.exception("Caught Exception. See stacktrace for details.")
-        return "Server Error", 500
+        logger.exception(e)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
-    return "Success", 200
+    return "Ok"
 
 
 if __name__ == "__main__":
