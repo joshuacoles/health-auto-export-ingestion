@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from itertools import groupby
 
-from flask import request, Flask
+from fastapi import FastAPI
 from influxdb import InfluxDBClient
 from geolib import geohash
 
@@ -19,13 +19,12 @@ formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-app = Flask(__name__)
-app.debug = True
+app = FastAPI()
 
 data_store = os.environ.get("DATA_STORE", None)
 influx_host = os.environ.get("INFLUX_HOST", "influx")
 influx_port = os.environ.get("INFLUX_PORT", 8086)
-influx_db = os.environ.get("INFLUXDB_DB", 'health')
+influx_db = os.environ.get("INFLUXDB_DB", "health")
 
 client = InfluxDBClient(host=influx_host, port=influx_port)
 client.create_database(influx_db)
@@ -103,20 +102,15 @@ def ingest_metrics(metrics: list):
     write_to_influx(transformed_data)
 
 
-@app.route("/", methods=["POST", "GET"])
-def collect():
+@app.post("/")
+def collect(healthkit_data: dict):
     logger.info(f"Request received")
 
-    try:
-        if data_store is not None:
-            with open(
-                os.path.join(data_store, datetime.now().isoformat() + ".json"), "w"
-            ) as f:
-                f.write(json.dumps(request.data))
-
-        healthkit_data = json.loads(request.data)
-    except:
-        return "Invalid JSON Received", 400
+    if data_store is not None:
+        with open(
+            os.path.join(data_store, datetime.now().isoformat() + ".json"), "w"
+        ) as f:
+            f.write(json.dumps(healthkit_data))
 
     try:
         ingest_metrics(healthkit_data.get("data", {}).get("metrics", []))
@@ -129,4 +123,6 @@ def collect():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    import uvicorn
+
+    uvicorn.run("my_package.main:app", host="0.0.0.0", port=7788, reload=True)

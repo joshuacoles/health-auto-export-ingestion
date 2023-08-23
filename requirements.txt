@@ -1,4 +1,4 @@
 influxdb
 geolib
-flask
+fastapi
 uvicorn
